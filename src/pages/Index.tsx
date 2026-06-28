@@ -1,15 +1,44 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useState, useEffect } from 'react';
+import Navbar from '@/components/Navbar';
+import Landing from '@/components/Landing';
+import Cabinet from '@/components/Cabinet';
+import Admin from '@/components/Admin';
 
 const Index = () => {
+  const [page, setPage] = useState('home');
+
+  const scrollTo = (id: string) => {
+    if (id === 'home') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const navigate = (id: string) => {
+    if (id === 'cabinet' || id === 'admin') {
+      setPage(id);
+      window.scrollTo({ top: 0 });
+      return;
+    }
+    if (page !== 'home') {
+      setPage('home');
+      setTimeout(() => scrollTo(id), 100);
+    } else {
+      scrollTo(id);
+    }
+  };
+
+  useEffect(() => {
+    document.documentElement.classList.add('dark');
+  }, []);
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4 color-black text-black">Добро пожаловать!</h1>
-        <p className="text-xl text-gray-600">тут будет отображаться ваш проект</p>
-      </div>
-      <span className="absolute bottom-8 left-1/2 -translate-x-1/2 inline-block bg-[#FF6637] text-white text-sm px-4 py-2 rounded-full whitespace-nowrap">
-        Подождите 5 минут, Юра создает первую версию проекта с нуля
-      </span>
+    <div className="min-h-screen bg-background">
+      <Navbar active={page} onNavigate={navigate} />
+      {page === 'home' && <Landing onNavigate={navigate} />}
+      {page === 'cabinet' && <Cabinet />}
+      {page === 'admin' && <Admin />}
     </div>
   );
 };

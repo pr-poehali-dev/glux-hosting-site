@@ -18,7 +18,16 @@ export default {
 			}
 		},
 		extend: {
+			fontFamily: {
+				sans: ['Rubik', 'sans-serif'],
+				pixel: ['"Press Start 2P"', 'monospace'],
+			},
 			colors: {
+				neon: {
+					green: 'hsl(var(--neon-green))',
+					cyan: 'hsl(var(--neon-cyan))',
+					purple: 'hsl(var(--neon-purple))',
+				},
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',
