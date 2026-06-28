@@ -1,0 +1,25 @@
+{
+  "tests": [
+    {
+      "name": "CORS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Login with wrong credentials",
+      "method": "POST",
+      "path": "/?action=login",
+      "body": {"login": "wrong", "password": "wrong"},
+      "expectedStatus": 401,
+      "expectedBody": {"success": false},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Get hosts without token forbidden",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 403
+    }
+  ]
+}
