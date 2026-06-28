@@ -5,24 +5,22 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
+import AuthPage, { UserInfo } from '@/components/AuthPage';
 
-const API = 'https://functions.poehali.dev/d512cd7c-b4f4-49e5-81a1-f4fc243fb5ae';
+const ADMIN_API = 'https://functions.poehali.dev/d512cd7c-b4f4-49e5-81a1-f4fc243fb5ae';
+const AUTH_API = 'https://functions.poehali.dev/1fbe82fa-e88f-4f52-b46b-1e9bf6dce83d';
+const USER_KEY = 'glux_user';
 
 interface Server {
   id: number;
-  name: string;
+  server_name: string;
   ip: string;
   plan: string;
   status: 'online' | 'offline' | 'restarting';
-  players: string;
   ram: number;
   version: string;
-  autoRestart: boolean;
+  auto_restart: boolean;
 }
-
-const initialServers: Server[] = [
-  { id: 1, name: 'Мой сервер', ip: 'srv001.glux.host:25565', plan: 'IRON', status: 'online', players: '0/30', ram: 4096, version: '1.20.4', autoRestart: true },
-];
 
 const statusMap = {
   online: { label: 'Онлайн', color: 'text-primary', dot: 'bg-primary' },
@@ -36,8 +34,12 @@ interface ConsoleLine {
 }
 
 const Cabinet = () => {
-  const [servers, setServers] = useState(initialServers);
-  const [selected, setSelected] = useState<number>(1);
+  const [user, setUser] = useState<UserInfo | null>(() => {
+    try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch { return null; }
+  });
+  const [servers, setServers] = useState<Server[]>([]);
+  const [loadingServers, setLoadingServers] = useState(false);
+  const [selected, setSelected] = useState<number | null>(null);
   const [tab, setTab] = useState<'overview' | 'console' | 'settings'>('overview');
   const [consoleLines, setConsoleLines] = useState<ConsoleLine[]>([
     { type: 'sys', text: '[Glux] Консоль подключена. Введите "help" для списка команд.' },
@@ -49,45 +51,79 @@ const Cabinet = () => {
   const consoleEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const server = servers.find((s) => s.id === selected)!;
-
   useEffect(() => {
     consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [consoleLines]);
 
-  const update = (id: number, patch: Partial<Server>) =>
-    setServers((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  useEffect(() => {
+    if (user) loadServers();
+  }, [user]);
 
-  const toggle = (s: Server) => {
-    const next = s.status === 'online' ? 'offline' : 'online';
-    update(s.id, { status: next });
-    setConsoleLines((p) => [...p,
-      { type: 'sys', text: next === 'online' ? '[Glux] Сервер запускается...' : '[Glux] Сервер останавливается...' },
-    ]);
-    toast.success(next === 'online' ? `${s.name} запущен` : `${s.name} остановлен`);
+  const loadServers = async () => {
+    if (!user) return;
+    setLoadingServers(true);
+    try {
+      const res = await fetch(`${AUTH_API}?action=my_servers&user_id=${user.id}`, {
+        headers: { 'X-User-Token': user.token },
+      });
+      const data = await res.json();
+      setServers(data.servers || []);
+      if (data.servers?.length > 0) setSelected(data.servers[0].id);
+    } catch {
+      toast.error('Ошибка загрузки серверов');
+    } finally {
+      setLoadingServers(false);
+    }
   };
 
-  const restart = (s: Server) => {
-    update(s.id, { status: 'restarting' });
+  const handleAuth = (u: UserInfo) => {
+    localStorage.setItem(USER_KEY, JSON.stringify(u));
+    setUser(u);
+  };
+
+  const logout = () => {
+    localStorage.removeItem(USER_KEY);
+    setUser(null);
+    setServers([]);
+    setSelected(null);
+  };
+
+  const server = servers.find((s) => s.id === selected);
+
+  const updateServer = (id: number, patch: Partial<Server>) =>
+    setServers((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+
+  const toggleServer = async (s: Server) => {
+    const newStatus = s.status === 'online' ? 'offline' : 'online';
+    updateServer(s.id, { status: newStatus });
+    setConsoleLines((p) => [...p, {
+      type: 'sys',
+      text: newStatus === 'online' ? '[Glux] Сервер запускается...' : '[Glux] Сервер останавливается...',
+    }]);
+    toast.success(newStatus === 'online' ? `${s.server_name} запущен` : `${s.server_name} остановлен`);
+  };
+
+  const restartServer = (s: Server) => {
+    updateServer(s.id, { status: 'restarting' });
     setConsoleLines((p) => [...p, { type: 'sys', text: '[Glux] Перезагрузка сервера...' }]);
-    toast.info(`Перезагрузка ${s.name}...`);
+    toast.info(`Перезагрузка ${s.server_name}...`);
     setTimeout(() => {
-      update(s.id, { status: 'online' });
+      updateServer(s.id, { status: 'online' });
       setConsoleLines((p) => [...p, { type: 'sys', text: '[Glux] Сервер успешно перезагружен.' }]);
-      toast.success(`${s.name} перезагружен`);
+      toast.success(`${s.server_name} перезагружен`);
     }, 2500);
   };
 
   const sendCmd = async () => {
     const c = cmd.trim();
-    if (!c) return;
+    if (!c || !selected) return;
     setConsoleLines((p) => [...p, { type: 'cmd', text: `> ${c}` }]);
     setCmdHistory((p) => [c, ...p.slice(0, 49)]);
     setHistIdx(-1);
     setCmd('');
     setSendingCmd(true);
     try {
-      const res = await fetch(`${API}?action=console`, {
+      const res = await fetch(`${ADMIN_API}?action=console`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Token': '' },
         body: JSON.stringify({ host_id: selected, cmd: c }),
@@ -98,9 +134,7 @@ const Cabinet = () => {
         .flatMap((e: { cmd: string; out: string[] }) =>
           e.out.map((line: string) => ({ type: 'out' as const, text: line }))
         );
-      if (entries.length) {
-        setConsoleLines((p) => [...p, ...entries]);
-      }
+      if (entries.length) setConsoleLines((p) => [...p, ...entries]);
     } catch {
       setConsoleLines((p) => [...p, { type: 'sys', text: '[Glux] Ошибка отправки команды' }]);
     } finally {
@@ -123,28 +157,51 @@ const Cabinet = () => {
     }
   };
 
-  const clearConsole = () => {
-    setConsoleLines([{ type: 'sys', text: '[Glux] Консоль очищена.' }]);
-  };
-
   const lineColor = (type: ConsoleLine['type']) => {
     if (type === 'cmd') return 'text-accent';
     if (type === 'sys') return 'text-primary/70';
     return 'text-foreground/80';
   };
 
+  // Не авторизован — экран входа/регистрации
+  if (!user) return <AuthPage onAuth={handleAuth} />;
+
   return (
     <div className="pt-24 pb-20 container">
-      <div className="mb-10">
-        <h1 className="font-pixel text-2xl text-primary neon-text mb-2">ЛИЧНЫЙ КАБИНЕТ</h1>
-        <p className="text-muted-foreground">Управляй своими серверами в одном месте</p>
+      <div className="mb-8 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-pixel text-2xl text-primary neon-text mb-1">ЛИЧНЫЙ КАБИНЕТ</h1>
+          <p className="text-muted-foreground text-sm">Привет, <span className="text-foreground font-medium">{user.username}</span>!</p>
+        </div>
+        <Button variant="outline" onClick={logout} className="border-border text-muted-foreground text-sm">
+          <Icon name="LogOut" size={15} className="mr-2" /> Выйти
+        </Button>
       </div>
 
       <div className="grid lg:grid-cols-[300px_1fr] gap-6">
         {/* Sidebar */}
         <aside className="space-y-3">
+          {loadingServers && (
+            <div className="glass rounded-xl p-6 border border-border text-center text-muted-foreground text-sm">
+              <Icon name="Loader2" size={20} className="animate-spin mx-auto mb-2 text-primary" />
+              Загрузка серверов...
+            </div>
+          )}
+          {!loadingServers && servers.length === 0 && (
+            <div className="glass rounded-xl p-6 border border-border text-center">
+              <Icon name="Server" size={28} className="text-muted-foreground mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground mb-3">У тебя пока нет серверов</p>
+              <p className="text-xs text-muted-foreground">
+                Купи тариф через{' '}
+                <button onClick={() => window.open('https://t.me/virtso', '_blank')} className="text-primary hover:underline">
+                  @virtso
+                </button>{' '}
+                и укажи никнейм: <span className="text-accent font-mono">@{user.username}</span>
+              </p>
+            </div>
+          )}
           {servers.map((s) => {
-            const st = statusMap[s.status];
+            const st = statusMap[s.status] || statusMap.offline;
             return (
               <button
                 key={s.id}
@@ -154,7 +211,7 @@ const Cabinet = () => {
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold truncate">{s.name}</span>
+                  <span className="font-semibold truncate">{s.server_name}</span>
                   <span className={`flex items-center gap-1 text-xs ${st.color}`}>
                     <span className={`w-2 h-2 rounded-full ${st.dot}`} /> {st.label}
                   </span>
@@ -172,169 +229,154 @@ const Cabinet = () => {
           </Button>
         </aside>
 
-        {/* Main panel */}
-        <main className="space-y-4">
-          {/* Header */}
-          <div className="glass rounded-2xl p-5 border border-border">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-3 mb-1">
-                  <h2 className="text-xl font-bold">{server.name}</h2>
-                  <span className="font-pixel text-[10px] px-2 py-1 rounded bg-secondary text-primary">{server.plan}</span>
-                </div>
-                <p className="text-sm text-muted-foreground font-mono">{server.ip}</p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => toggle(server)}
-                  className={server.status === 'online'
-                    ? 'bg-destructive hover:bg-destructive/90 text-destructive-foreground'
-                    : 'bg-primary hover:bg-primary/90 text-primary-foreground'}
-                >
-                  <Icon name={server.status === 'online' ? 'Power' : 'Play'} size={16} className="mr-2" />
-                  {server.status === 'online' ? 'Стоп' : 'Запуск'}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => restart(server)}
-                  disabled={server.status === 'restarting'}
-                  className="border-accent text-accent hover:bg-accent hover:text-accent-foreground"
-                >
-                  <Icon name="RotateCw" size={16} className="mr-2" /> Рестарт
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Tabs */}
-          <div className="flex gap-1 glass rounded-xl p-1 border border-border w-fit">
-            {([['overview', 'Обзор', 'LayoutDashboard'], ['console', 'Консоль', 'Terminal'], ['settings', 'Настройки', 'Settings']] as const).map(([id, label, icon]) => (
-              <button
-                key={id}
-                onClick={() => setTab(id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  tab === id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Icon name={icon} size={15} /> {label}
-              </button>
-            ))}
-          </div>
-
-          {/* OVERVIEW */}
-          {tab === 'overview' && (
-            <div className="glass rounded-2xl p-6 border border-border">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[
-                  { icon: 'Users', label: 'Игроки', value: server.players },
-                  { icon: 'MemoryStick', label: 'RAM', value: `${(server.ram / 1024).toFixed(0)} ГБ` },
-                  { icon: 'Tag', label: 'Версия', value: server.version },
-                  { icon: 'Activity', label: 'Статус', value: statusMap[server.status].label },
-                ].map((m) => (
-                  <div key={m.label} className="bg-secondary/40 rounded-xl p-4">
-                    <Icon name={m.icon} className="text-primary mb-2" size={18} />
-                    <div className="text-xs text-muted-foreground">{m.label}</div>
-                    <div className="font-semibold">{m.value}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* CONSOLE */}
-          {tab === 'console' && (
-            <div className="glass rounded-2xl border border-border overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-secondary/30">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Icon name="Terminal" size={16} className="text-primary" />
-                  <span>Консоль — {server.name}</span>
-                  <span className={`w-2 h-2 rounded-full ml-1 ${statusMap[server.status].dot}`} />
-                </div>
-                <Button variant="ghost" size="sm" onClick={clearConsole} className="text-muted-foreground text-xs">
-                  <Icon name="Trash2" size={13} className="mr-1" /> Очистить
-                </Button>
-              </div>
-
-              <div
-                className="h-80 overflow-y-auto p-4 font-mono text-xs space-y-0.5 bg-background/60"
-                onClick={() => inputRef.current?.focus()}
-              >
-                {consoleLines.map((line, i) => (
-                  <div key={i} className={`leading-5 ${lineColor(line.type)}`}>
-                    {line.text}
-                  </div>
-                ))}
-                <div ref={consoleEndRef} />
-              </div>
-
-              <div className="flex items-center gap-2 px-4 py-3 border-t border-border bg-secondary/20">
-                <span className="text-primary font-mono text-sm select-none">{'>'}</span>
-                <Input
-                  ref={inputRef}
-                  value={cmd}
-                  onChange={(e) => setCmd(e.target.value)}
-                  onKeyDown={onKeyDown}
-                  placeholder='Введите команду... (например: list, say Привет, help)'
-                  className="flex-1 bg-transparent border-none focus-visible:ring-0 font-mono text-sm h-8 p-0 placeholder:text-muted-foreground/50"
-                  disabled={sendingCmd}
-                  autoFocus
-                />
-                <Button
-                  size="sm"
-                  onClick={sendCmd}
-                  disabled={sendingCmd || !cmd.trim()}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 h-8"
-                >
-                  {sendingCmd
-                    ? <Icon name="Loader2" size={14} className="animate-spin" />
-                    : <Icon name="Send" size={14} />}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* SETTINGS */}
-          {tab === 'settings' && (
-            <div className="glass rounded-2xl p-6 border border-border space-y-6">
-              <div>
-                <div className="flex justify-between mb-2 text-sm">
-                  <span>Выделенная память (RAM)</span>
-                  <span className="text-primary font-medium">{(server.ram / 1024).toFixed(0)} ГБ</span>
-                </div>
-                <Slider
-                  value={[server.ram]}
-                  min={2048}
-                  max={8192}
-                  step={1024}
-                  onValueChange={([v]) => update(server.id, { ram: v })}
-                />
-              </div>
-
-              <div className="flex items-center justify-between py-3 border-t border-border">
+        {/* Main */}
+        {server ? (
+          <main className="space-y-4">
+            <div className="glass rounded-2xl p-5 border border-border">
+              <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <div className="text-sm font-medium">Авто-перезагрузка</div>
-                  <div className="text-xs text-muted-foreground">Перезапуск каждые 6 часов</div>
+                  <div className="flex items-center gap-3 mb-1">
+                    <h2 className="text-xl font-bold">{server.server_name}</h2>
+                    <span className="font-pixel text-[10px] px-2 py-1 rounded bg-secondary text-primary">{server.plan}</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground font-mono">{server.ip}</p>
                 </div>
-                <Switch
-                  checked={server.autoRestart}
-                  onCheckedChange={(v) => {
-                    update(server.id, { autoRestart: v });
-                    toast.success(v ? 'Авто-перезагрузка включена' : 'Авто-перезагрузка выключена');
-                  }}
-                />
-              </div>
-
-              <div className="flex flex-wrap gap-3 pt-2">
-                <Button variant="outline" onClick={() => toast.success('Бэкап создаётся...')} className="border-border">
-                  <Icon name="Database" size={16} className="mr-2" /> Создать бэкап
-                </Button>
-                <Button variant="outline" onClick={() => toast.info('Скоро')} className="border-border">
-                  <Icon name="FolderOpen" size={16} className="mr-2" /> Файлы
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => toggleServer(server)}
+                    className={server.status === 'online'
+                      ? 'bg-destructive hover:bg-destructive/90 text-destructive-foreground'
+                      : 'bg-primary hover:bg-primary/90 text-primary-foreground'}
+                  >
+                    <Icon name={server.status === 'online' ? 'Power' : 'Play'} size={16} className="mr-2" />
+                    {server.status === 'online' ? 'Стоп' : 'Запуск'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => restartServer(server)}
+                    disabled={server.status === 'restarting'}
+                    className="border-accent text-accent hover:bg-accent hover:text-accent-foreground"
+                  >
+                    <Icon name="RotateCw" size={16} className="mr-2" /> Рестарт
+                  </Button>
+                </div>
               </div>
             </div>
-          )}
-        </main>
+
+            {/* Tabs */}
+            <div className="flex gap-1 glass rounded-xl p-1 border border-border w-fit">
+              {([['overview', 'Обзор', 'LayoutDashboard'], ['console', 'Консоль', 'Terminal'], ['settings', 'Настройки', 'Settings']] as const).map(([id, label, icon]) => (
+                <button
+                  key={id}
+                  onClick={() => setTab(id)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    tab === id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Icon name={icon} size={15} /> {label}
+                </button>
+              ))}
+            </div>
+
+            {tab === 'overview' && (
+              <div className="glass rounded-2xl p-6 border border-border">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    { icon: 'MemoryStick', label: 'RAM', value: `${(server.ram / 1024).toFixed(0)} ГБ` },
+                    { icon: 'Tag', label: 'Версия', value: server.version },
+                    { icon: 'Activity', label: 'Статус', value: (statusMap[server.status] || statusMap.offline).label },
+                    { icon: 'Gem', label: 'Тариф', value: server.plan },
+                  ].map((m) => (
+                    <div key={m.label} className="bg-secondary/40 rounded-xl p-4">
+                      <Icon name={m.icon} className="text-primary mb-2" size={18} />
+                      <div className="text-xs text-muted-foreground">{m.label}</div>
+                      <div className="font-semibold">{m.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {tab === 'console' && (
+              <div className="glass rounded-2xl border border-border overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-secondary/30">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Icon name="Terminal" size={16} className="text-primary" />
+                    <span>Консоль — {server.server_name}</span>
+                    <span className={`w-2 h-2 rounded-full ml-1 ${(statusMap[server.status] || statusMap.offline).dot}`} />
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => setConsoleLines([{ type: 'sys', text: '[Glux] Консоль очищена.' }])} className="text-muted-foreground text-xs">
+                    <Icon name="Trash2" size={13} className="mr-1" /> Очистить
+                  </Button>
+                </div>
+                <div
+                  className="h-80 overflow-y-auto p-4 font-mono text-xs space-y-0.5 bg-background/60"
+                  onClick={() => inputRef.current?.focus()}
+                >
+                  {consoleLines.map((line, i) => (
+                    <div key={i} className={`leading-5 ${lineColor(line.type)}`}>{line.text}</div>
+                  ))}
+                  <div ref={consoleEndRef} />
+                </div>
+                <div className="flex items-center gap-2 px-4 py-3 border-t border-border bg-secondary/20">
+                  <span className="text-primary font-mono text-sm select-none">{'>'}</span>
+                  <Input
+                    ref={inputRef}
+                    value={cmd}
+                    onChange={(e) => setCmd(e.target.value)}
+                    onKeyDown={onKeyDown}
+                    placeholder="list, say Привет, help..."
+                    className="flex-1 bg-transparent border-none focus-visible:ring-0 font-mono text-sm h-8 p-0 placeholder:text-muted-foreground/50"
+                    disabled={sendingCmd}
+                    autoFocus
+                  />
+                  <Button size="sm" onClick={sendCmd} disabled={sendingCmd || !cmd.trim()} className="bg-primary text-primary-foreground hover:bg-primary/90 h-8">
+                    {sendingCmd ? <Icon name="Loader2" size={14} className="animate-spin" /> : <Icon name="Send" size={14} />}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {tab === 'settings' && (
+              <div className="glass rounded-2xl p-6 border border-border space-y-6">
+                <div>
+                  <div className="flex justify-between mb-2 text-sm">
+                    <span>Выделенная память (RAM)</span>
+                    <span className="text-primary font-medium">{(server.ram / 1024).toFixed(0)} ГБ</span>
+                  </div>
+                  <Slider value={[server.ram]} min={2048} max={8192} step={1024} onValueChange={([v]) => updateServer(server.id, { ram: v })} />
+                </div>
+                <div className="flex items-center justify-between py-3 border-t border-border">
+                  <div>
+                    <div className="text-sm font-medium">Авто-перезагрузка</div>
+                    <div className="text-xs text-muted-foreground">Перезапуск каждые 6 часов</div>
+                  </div>
+                  <Switch
+                    checked={server.auto_restart}
+                    onCheckedChange={(v) => {
+                      updateServer(server.id, { auto_restart: v });
+                      toast.success(v ? 'Авто-перезагрузка включена' : 'Выключена');
+                    }}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-3 pt-2">
+                  <Button variant="outline" onClick={() => toast.success('Бэкап создаётся...')} className="border-border">
+                    <Icon name="Database" size={16} className="mr-2" /> Создать бэкап
+                  </Button>
+                  <Button variant="outline" onClick={() => toast.info('Скоро')} className="border-border">
+                    <Icon name="FolderOpen" size={16} className="mr-2" /> Файлы
+                  </Button>
+                </div>
+              </div>
+            )}
+          </main>
+        ) : (
+          !loadingServers && servers.length > 0 && (
+            <div className="glass rounded-2xl p-10 border border-border flex items-center justify-center text-muted-foreground">
+              Выбери сервер слева
+            </div>
+          )
+        )}
       </div>
     </div>
   );

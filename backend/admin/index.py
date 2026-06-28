@@ -1,6 +1,6 @@
 import json
 import os
-import secrets
+import hashlib
 import string
 import random
 import psycopg2
@@ -12,6 +12,11 @@ ALLOWED_PLANS = {
 }
 
 CONSOLE_LOGS = {}
+
+# Учётные данные администратора (SHA256 от "dom:123")
+ADMIN_LOGIN_HASH = hashlib.sha256('dom'.encode()).hexdigest()
+ADMIN_PASSWORD_HASH = hashlib.sha256('123'.encode()).hexdigest()
+ADMIN_SESSION_TOKEN = hashlib.sha256('dom:123:glux'.encode()).hexdigest()
 
 
 def cors_headers():
@@ -32,18 +37,14 @@ def get_conn():
     return psycopg2.connect(os.environ['DATABASE_URL'])
 
 
-def safe_eq(a: str, b: str) -> bool:
-    a_b = a.encode('utf-8')
-    b_b = b.encode('utf-8')
-    if len(a_b) != len(b_b):
-        return False
-    return secrets.compare_digest(a_b, b_b)
+def check_creds(login: str, password: str) -> bool:
+    lh = hashlib.sha256(login.encode()).hexdigest()
+    ph = hashlib.sha256(password.encode()).hexdigest()
+    return lh == ADMIN_LOGIN_HASH and ph == ADMIN_PASSWORD_HASH
 
 
 def admin_token():
-    login = os.environ.get('ADMIN_LOGIN', '')
-    password = os.environ.get('ADMIN_PASSWORD', '')
-    return f'glux_{login}_{password}'.encode('utf-8').hex()
+    return ADMIN_SESSION_TOKEN
 
 
 def gen_rcon():
@@ -127,16 +128,14 @@ def handler(event: dict, context) -> dict:
     if action == 'login' and method == 'POST':
         login = body.get('login', '')
         password = body.get('password', '')
-        real_login = os.environ.get('ADMIN_LOGIN', '')
-        real_password = os.environ.get('ADMIN_PASSWORD', '')
-        if safe_eq(login, real_login) and safe_eq(password, real_password):
+        if check_creds(login, password):
             return resp(200, {'success': True, 'token': admin_token()})
         return resp(401, {'success': False, 'error': 'Неверный логин или пароль'})
 
     # Все остальные действия требуют токен
     headers = event.get('headers') or {}
     token = headers.get('X-Admin-Token') or headers.get('x-admin-token', '')
-    if not safe_eq(token, admin_token()):
+    if token != admin_token():
         return resp(403, {'error': 'Доступ запрещён'})
 
     # Консоль
